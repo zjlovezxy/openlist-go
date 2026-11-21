@@ -4,6 +4,12 @@
 
 <!-- 写在这里的内容会成为下一个版本的更新说明；留空则按提交记录自动生成。 -->
 
+## [0.1.1] - 2026-11-21
+
+### 改进
+
+- ci: add Android arm64 build to GitHub Actions release workflow
+
 ## [0.1.0] - 2026-11-21
 
 ### 改进
