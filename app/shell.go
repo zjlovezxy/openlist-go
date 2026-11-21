@@ -48,6 +48,10 @@ func barHeight(c *ui.Context) float32 {
 // shell is the window around the pages: the sidebar over the window's
 // material, and the pane of the page with its title bar.
 func (a *App) shell(c *ui.Context, t *ui.Theme, p *palette) {
+	if a.isMobile(c) {
+		a.mobileShell(c, t, p)
+		return
+	}
 	a.sampleSpeed(c)
 	if !a.dlg.open && a.pv == nil && c.Shortcut(ui.Cmd, ui.KeyComma) && a.router.Path() != "/settings" {
 		a.router.Push("/settings")

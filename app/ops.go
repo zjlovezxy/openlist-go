@@ -157,6 +157,12 @@ func (a *App) dialogs(c *ui.Context, t *ui.Theme, p *palette) {
 		if d.kind == dlgSaveLink {
 			width = 480
 		}
+		if a.isMobile(c) {
+			w, _ := c.Size()
+			if w > 0 {
+				width = min(width, w-32)
+			}
+		}
 		panel.Width(width).Padding(20).Gap(14).Radius(14).Background(p.Card).Border(1, p.Hairline).
 			Shadow(0, 16, 40, -12, p.Shadow).Transition(popIn)
 		switch d.kind {
@@ -291,7 +297,13 @@ func (a *App) selectionBar(c *ui.Context, t *ui.Theme, p *palette, l *listing, w
 		return
 	}
 	labels := width == 0 || width >= selBarLabels
-	bar := ui.Row(c).Key("selbar").Absolute().Bottom(40).Attach(ui.AnchorBottom, ui.AnchorBottom).
+	bottomPos := float32(40)
+	if a.isMobile(c) {
+		labels = false
+		_, _, safeB, _ := c.SafeArea()
+		bottomPos = 54 + safeB + 10
+	}
+	bar := ui.Row(c).Key("selbar").Absolute().Bottom(bottomPos).Attach(ui.AnchorBottom, ui.AnchorBottom).
 		Padding(4, 4, 4, 14).Gap(2).Radius(12).AlignItems(ui.Center).
 		Background(p.Card).Border(1, p.Hairline).Shadow(0, 8, 24, -10, p.Shadow).
 		Transition(ui.ElementTransition{Animation: &motionFade, Enter: &ui.Motion{Y: 8, Opacity: 0}, Exit: &ui.Motion{Opacity: 0}})

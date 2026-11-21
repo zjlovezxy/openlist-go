@@ -128,8 +128,12 @@ func (a *App) tileGrid(c *ui.Context, l *listing, maker func(e ui.Element), tile
 					// Clicks in a name edited are the input's.
 					editing := a.renamingIn(l, f) || f.FsID == draftID
 					if e.Clicked() && !editing {
-						g.click(l, i, e.ClickModifiers())
-						grid.Focus()
+						if a.isMobile(c) {
+							a.open(*f)
+						} else {
+							g.click(l, i, e.ClickModifiers())
+							grid.Focus()
+						}
 					}
 					if e.DoubleClicked() && !editing {
 						a.open(*f)

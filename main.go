@@ -5,6 +5,7 @@ package main
 import (
 	"log"
 	"os"
+	"runtime"
 
 	"github.com/egoist/mygo"
 	_ "github.com/egoist/mygo/locales/zh-Hans" // MyGo's own strings in Chinese
@@ -40,7 +41,7 @@ func main() {
 	// Before Run, to hear of a click that launched the app.
 	mygo.App.OnNotificationClick(a.Notification)
 	mygo.App.WhenReady(func() {
-		win := mygo.NewWindow(mygo.WindowOptions{
+		winOpts := mygo.WindowOptions{
 			Title:                "OpenListGo",
 			Width:                1180,
 			Height:               760,
@@ -52,7 +53,15 @@ func main() {
 			TitleBarHeight:       52,
 			Vibrancy:             mygo.VibrancySidebar,
 			Content:              ui.View(a.View),
-		})
+		}
+		if runtime.GOOS == "android" || runtime.GOOS == "ios" || os.Getenv("OPENLIST_MOBILE") == "1" {
+			winOpts.Width = 390
+			winOpts.Height = 844
+			winOpts.MinWidth = 0
+			winOpts.MinHeight = 0
+			winOpts.StateKey = "main_mobile"
+		}
+		win := mygo.NewWindow(winOpts)
 		a.Attach(win)
 		mygo.App.OnSecondInstance(func([]string, string) {
 			if win.IsMinimized() {

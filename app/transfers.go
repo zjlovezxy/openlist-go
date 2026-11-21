@@ -257,33 +257,38 @@ func (a *App) transfersPage(c *ui.Context, t *ui.Theme, p *palette) {
 		shown = done
 	}
 	reading := a.xfer != nil && a.xfer.Reading() > 0 && x.tab == 0
-	if len(shown) == 0 && reading {
-		ui.Column(c).Grow(1).Center().Children(func() { ui.Spinner(c).Label("正在读取文件夹") })
-		return
-	}
-	if len(shown) == 0 {
-		if x.tab == 0 {
-			emptyState(c, t, p, "arrow-up-down", "没有正在进行的传输", "下载或上传的文件会出现在这里", nil)
-		} else {
-			emptyState(c, t, p, "circle-check", "还没有完成的传输", "", nil)
-		}
-		return
-	}
-	x.list.Key = func(i int) any { return shown[i].ID }
-	x.list.MoveAnimation = &motionPanel
+
 	ui.Column(c).Grow(1).Children(func() {
-		if x.tab == 0 {
-			a.speedCard(c, t, p)
-		}
-		if reading {
-			ui.Row(c).Gap(8).PaddingX(20).AlignItems(ui.Center).Children(func() {
-				ui.Spinner(c)
-				ui.Text(c, "正在读取文件夹，其中的文件会陆续加入").FontSize(12).TextColor(t.TextMuted)
+		if a.isMobile(c) {
+			ui.Row(c).Padding(8, 14, 4).Children(func() {
+				segmented(c, t, p, &x.tab, "进行中 ("+itoa(len(going))+")", "已完成 ("+itoa(len(done))+")").FillWidth()
 			})
 		}
-		ui.List(c, &x.list, len(shown), func(i int) {
-			a.transferRow(c, t, p, shown[i], i)
-		}).Grow(1).Padding(4, 10, 20)
+		switch {
+		case len(shown) == 0 && reading:
+			ui.Column(c).Grow(1).Center().Children(func() { ui.Spinner(c).Label("正在读取文件夹") })
+		case len(shown) == 0:
+			if x.tab == 0 {
+				emptyState(c, t, p, "arrow-up-down", "没有正在进行的传输", "下载或上传的文件会出现在这里", nil)
+			} else {
+				emptyState(c, t, p, "circle-check", "还没有完成的传输", "", nil)
+			}
+		default:
+			x.list.Key = func(i int) any { return shown[i].ID }
+			x.list.MoveAnimation = &motionPanel
+			if x.tab == 0 {
+				a.speedCard(c, t, p)
+			}
+			if reading {
+				ui.Row(c).Gap(8).PaddingX(20).AlignItems(ui.Center).Children(func() {
+					ui.Spinner(c)
+					ui.Text(c, "正在读取文件夹，其中的文件会陆续加入").FontSize(12).TextColor(t.TextMuted)
+				})
+			}
+			ui.List(c, &x.list, len(shown), func(i int) {
+				a.transferRow(c, t, p, shown[i], i)
+			}).Grow(1).Padding(4, 10, 20)
+		}
 	})
 }
 
@@ -294,8 +299,12 @@ func (a *App) speedCard(c *ui.Context, t *ui.Theme, p *palette) {
 	down, up, queued, speed := a.transferCounts()
 	cfg := a.transferConfig()
 	green := navItems[1].tile
+	rowGap := float32(36)
+	if a.isMobile(c) {
+		rowGap = 12
+	}
 	group(c, p).Margin(4, 20, 8).Padding(16, 18).Gap(12).Transition(popIn).Children(func() {
-		ui.Row(c).Gap(36).AlignItems(ui.End).Children(func() {
+		ui.Row(c).Gap(rowGap).AlignItems(ui.End).Children(func() {
 			ui.Column(c).Gap(2).Children(func() {
 				ui.Text(c, "当前速度").FontSize(12).TextColor(t.TextMuted)
 				ui.Row(c).Gap(5).AlignItems(ui.Baseline).Children(func() {

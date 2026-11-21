@@ -108,7 +108,7 @@ func (a *App) searchPage(c *ui.Context, t *ui.Theme, p *palette, q string) {
 					}
 					figure(c, humanTime(f.Mtime, now)).Width(140).TextAlign(ui.End).TextColor(t.TextMuted)
 				})
-				if row.DoubleClicked() {
+				if (a.isMobile(c) && row.Clicked()) || row.DoubleClicked() {
 					a.open(f)
 				}
 				contextMenu(row, func(m *ui.Menu) {

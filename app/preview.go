@@ -397,7 +397,14 @@ func previewScrim(t *ui.Theme) ui.Color {
 func (a *App) previewBar(c *ui.Context, t *ui.Theme, p *palette, pv *previewState) {
 	bar := c.TitleBar()
 	white := ui.Hex("#ecece8")
-	ui.Row(c).Height(barHeight(c)).PaddingStart(max(bar.Left, 0) + 20).PaddingEnd(bar.Right + 8).
+	top, _, _, _ := c.SafeArea()
+	h := barHeight(c)
+	padTop := float32(0)
+	if a.isMobile(c) {
+		padTop = top
+		h = 50 + top
+	}
+	ui.Row(c).Height(h).Padding(padTop, bar.Right+8, 0, max(bar.Left, 0)+16).
 		Gap(12).AlignItems(ui.Center).TextColor(white).DragWindow().
 		Transition(ui.ElementTransition{Animation: &motionPanel, Enter: &ui.Motion{Y: -12, Opacity: 0}}).Children(func() {
 		lk := pv.kind.look(p)

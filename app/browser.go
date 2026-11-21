@@ -78,7 +78,7 @@ func (a *App) filesPage(c *ui.Context, t *ui.Theme, p *palette, dir string) {
 		default:
 			a.fileList(c, t, p, l)
 		}
-		if l.loaded {
+		if l.loaded && !a.isMobile(c) {
 			a.statusBar(c, t, p, l)
 		}
 		a.selectionBar(c, t, p, l, page.Bounds().W)
@@ -134,6 +134,10 @@ func (a *App) bindListState(l *listing) {
 }
 
 func (a *App) fileList(c *ui.Context, t *ui.Theme, p *palette, l *listing) {
+	if a.isMobile(c) {
+		a.mobileFileList(c, t, p, l)
+		return
+	}
 	a.bindListState(l)
 	now := c.Now()
 	a.listHeader(c, t, p)
@@ -517,50 +521,54 @@ func kindLabel(f *baidu.File) string {
 func (a *App) fileMenu(e ui.Element, l *listing, i int) {
 	f := l.files[i]
 	contextMenu(e, func(m *ui.Menu) {
-		files := []baidu.File{f}
-		if l.sel.Has(f.FsID) {
-			files = l.chosen()
-		}
-		one := len(files) == 1
-		if one && m.Item("打开").Chosen() {
-			a.open(f)
-		}
-		if k := kindOf(&f); one && (k == kindVideo || k == kindAudio) {
-			if m.Item("用 mpv 播放").Chosen() {
-				a.playInMPV(f)
-			}
-		}
-		m.Separator()
-		if m.Item("下载").Chosen() {
-			a.download(files)
-		}
-		if m.Item("分享").Chosen() {
-			a.share(files)
-		}
-		m.Separator()
-		if one && m.Item("重命名").Shortcut(0, ui.KeyF2).Chosen() {
-			a.rename(l, f)
-		}
-		if m.Item("移动到…").Chosen() {
-			a.ask(dlgMove, l.dir, files)
-		}
-		if m.Item("复制到…").Chosen() {
-			a.ask(dlgCopy, l.dir, files)
-		}
-		if one && m.Item("复制路径").Chosen() {
-			a.copy(f.Path, "已复制路径")
-		}
-		if one && kindOf(&f) == kindImage && m.Item("复制图片").Chosen() {
-			a.copyImage(f, nil)
-		}
-		if m.Item("显示详情").Shortcut(ui.Cmd, ui.KeyI).Chosen() {
-			a.showInfo(l.dir, files)
-		}
-		m.Separator()
-		if m.Item("删除").Shortcut(0, ui.KeyDelete).Chosen() {
-			a.remove(l.dir, files)
-		}
+		a.buildFileMenu(m, l, f)
 	})
+}
+
+func (a *App) buildFileMenu(m *ui.Menu, l *listing, f baidu.File) {
+	files := []baidu.File{f}
+	if l.sel.Has(f.FsID) {
+		files = l.chosen()
+	}
+	one := len(files) == 1
+	if one && m.Item("打开").Chosen() {
+		a.open(f)
+	}
+	if k := kindOf(&f); one && (k == kindVideo || k == kindAudio) {
+		if m.Item("用 mpv 播放").Chosen() {
+			a.playInMPV(f)
+		}
+	}
+	m.Separator()
+	if m.Item("下载").Chosen() {
+		a.download(files)
+	}
+	if m.Item("分享").Chosen() {
+		a.share(files)
+	}
+	m.Separator()
+	if one && m.Item("重命名").Shortcut(0, ui.KeyF2).Chosen() {
+		a.rename(l, f)
+	}
+	if m.Item("移动到…").Chosen() {
+		a.ask(dlgMove, l.dir, files)
+	}
+	if m.Item("复制到…").Chosen() {
+		a.ask(dlgCopy, l.dir, files)
+	}
+	if one && m.Item("复制路径").Chosen() {
+		a.copy(f.Path, "已复制路径")
+	}
+	if one && kindOf(&f) == kindImage && m.Item("复制图片").Chosen() {
+		a.copyImage(f, nil)
+	}
+	if m.Item("显示详情").Shortcut(ui.Cmd, ui.KeyI).Chosen() {
+		a.showInfo(l.dir, files)
+	}
+	m.Separator()
+	if m.Item("删除").Shortcut(0, ui.KeyDelete).Chosen() {
+		a.remove(l.dir, files)
+	}
 }
 
 // breadcrumbs shows where the browser is: the folder as the title and the

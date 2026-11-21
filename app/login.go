@@ -36,11 +36,22 @@ func (a *App) loginView(c *ui.Context, t *ui.Theme, p *palette) {
 
 	root := ui.Box(c).Fill().Background(t.Background).Clip()
 	root.Children(func() {
-		// The top drags the window.
-		ui.Box(c).Absolute().Top(0).Left(0).Right(0).Height(barHeight(c)).DragWindow()
+		// The top drags the window on desktop.
+		if !a.isMobile(c) {
+			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Height(barHeight(c)).DragWindow()
+		}
 
-		ui.Column(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().Children(func() {
-			ui.Column(c).Key("login").Width(360).Gap(16).AlignItems(ui.Center).Transition(popIn).Children(func() {
+		top, _, bottom, _ := c.SafeArea()
+		cardW := float32(360)
+		if a.isMobile(c) {
+			w, _ := c.Size()
+			if w > 0 {
+				cardW = min(360, w-32)
+			}
+		}
+
+		ui.Scroll(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Padding(top+16, 16, bottom+16, 16).Children(func() {
+			ui.Column(c).Key("login").Width(cardW).Margin(0, ui.Auto).Gap(16).AlignItems(ui.Center).Transition(popIn).Children(func() {
 				ui.Column(c).Gap(6).AlignItems(ui.Center).Children(func() {
 					logoMark(c, t, p, 56).Margin(0, 0, 4)
 					ui.Text(c, "登录 OpenList").FontSize(22).FontWeight(700)
