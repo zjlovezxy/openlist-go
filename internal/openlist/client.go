@@ -250,8 +250,8 @@ func (c *Client) login(ctx context.Context) error {
 // Quota returns storage quota.
 func (c *Client) Quota(ctx context.Context) (Quota, error) {
 	return Quota{
-		Total: 10 * (1 << 40),      // 10 TB
-		Used:  128 * (1 << 30),     // 128 GB
+		Total: 10 * (1 << 40),  // 10 TB
+		Used:  128 * (1 << 30), // 128 GB
 	}, nil
 }
 

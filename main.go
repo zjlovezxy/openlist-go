@@ -41,12 +41,12 @@ func main() {
 	mygo.App.OnNotificationClick(a.Notification)
 	mygo.App.WhenReady(func() {
 		win := mygo.NewWindow(mygo.WindowOptions{
-			Title:     "OpenListGo",
-			Width:     1180,
-			Height:    760,
-			MinWidth:  780,
-			MinHeight: 540,
-			StateKey:  "main",
+			Title:                "OpenListGo",
+			Width:                1180,
+			Height:               760,
+			MinWidth:             780,
+			MinHeight:            540,
+			StateKey:             "main",
 			TitleBarStyle:        mygo.TitleBarHiddenInset,
 			TrafficLightPosition: &mygo.Point{X: 20, Y: 18},
 			TitleBarHeight:       52,

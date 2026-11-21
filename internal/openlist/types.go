@@ -196,7 +196,7 @@ func (o *Offline) StatusText() string {
 type QRState int
 
 const (
-	QRWaiting   QRState = iota
+	QRWaiting QRState = iota
 	QRScanned
 	QRConfirmed
 	QRExpired

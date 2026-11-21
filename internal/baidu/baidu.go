@@ -48,10 +48,10 @@ var (
 	ErrShareGone     = errors.New("分享已失效")
 )
 
-func Open(cr Credentials) *Client { return openlist.Open(cr) }
-func OpenAt(cr Credentials, base string) *Client { return openlist.OpenAt(cr, base) }
-func ParseCredentials(s string) (Credentials, error) { return openlist.ParseCredentials(s) }
+func Open(cr Credentials) *Client                            { return openlist.Open(cr) }
+func OpenAt(cr Credentials, base string) *Client             { return openlist.OpenAt(cr, base) }
+func ParseCredentials(s string) (Credentials, error)         { return openlist.ParseCredentials(s) }
 func ParseShareLink(text string) (link, pwd string, ok bool) { return openlist.ParseShareLink(text) }
-func Expired(err error) bool { return openlist.Expired(err) }
-func Host(link string) string { return openlist.Host(link) }
-func NewQRLogin(ctx context.Context) (*QRLogin, error) { return openlist.NewQRLogin(ctx) }
+func Expired(err error) bool                                 { return openlist.Expired(err) }
+func Host(link string) string                                { return openlist.Host(link) }
+func NewQRLogin(ctx context.Context) (*QRLogin, error)       { return openlist.NewQRLogin(ctx) }
