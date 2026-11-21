@@ -1,0 +1,256 @@
+// Package app is BaiduNetGo's interface, drawn with MyGo's native ui
+// package. Its state lives in App; views only read it, and work done on
+// other goroutines writes back through App.update.
+package app
+
+import (
+	"os"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
+
+	"github.com/pengstem/baidunetgo/internal/auth"
+	"github.com/pengstem/baidunetgo/internal/baidu"
+	"github.com/pengstem/baidunetgo/internal/stream"
+	"github.com/pengstem/baidunetgo/internal/transfer"
+)
+
+// App is the state of the window.
+type App struct {
+	win    *mygo.Window
+	router *ui.Router
+
+	store *auth.Store
+	// saveMu guards saving, the client whose session is kept, and saved,
+	// what was last written.
+	saveMu sync.Mutex
+	saving *baidu.Client
+	saved  *baidu.Credentials
+	phase  phase
+	login  loginState
+	sess   *session
+	fake   bool // signed in to a pretend netdisk (BAIDUNETGO_FAKE)
+
+	listings    map[string]*listing
+	listingTick uint64
+	order       baidu.Order
+	gridView    bool
+	finding     bool              // Cmd-F asks for the search field
+	searchInput ui.Handle         // focuses and selects the previous search query
+	askingQuit  bool              // the question whether to quit is showing
+	quitOK      atomic.Bool       // the user said to quit while transfers go on
+	tileNames   map[string]string // names laid out for grid tiles (tileName)
+	gridSize    [2]float32        // the grid's tiles' width and its height, as last laid out
+	thumbs      *thumbs
+	dying       map[int64]*dying   // files deleted, dissolving (arrivals.go)
+	gathers     map[string]*gather // uploads, by the entry of their folder they make
+	passed      time.Time          // when passTime last moved them on
+	gpu         bool               // the window draws on a GPU, so shaders draw at speed
+
+	pv            *previewState
+	dlg           dialog
+	renaming      *renaming          // a name edited in place (rename.go)
+	creating      *creating          // a folder named in the maker (newfolder.go)
+	flights       map[string]*flight // files on their way into folders (landing.go)
+	slow          slowClick
+	recycle       recycleState
+	recycleDirty  bool
+	found         searchState
+	xfer          *transfer.Manager
+	stream        *stream.Server
+	tuning        bool   // measuring download speeds
+	tuneErr       string // why the last measurement failed
+	tuneStage     string // what the measurement measures now
+	tuneOpen      bool   // the measurement's details unfolded in settings
+	transfers     transfersState
+	sys           systemState
+	shareForm     shareForm
+	link          linkState // a share link opened to save (sharelink.go)
+	clipCheck     bool      // look for a share link on the clipboard when free
+	shares        sharesState
+	sharesDirty   bool
+	offline       offlineState
+	copied        string // the toast after copying
+	query         string
+	copyText      string // to put on the clipboard in the next frame
+	copyPNG       []byte // the same, for a picture
+	settings      settings
+	pendingToasts []ui.Toast
+
+	sidebarCollapsed bool
+	compact          bool // the title bar is narrow: choices fold into pop-up buttons
+	// The folder's tools that fold, as wide as they were last shown open
+	// [0] and folded [1], and which way they were built last frame; and
+	// whether the search field was open then. They tell how much room
+	// opening the tools would take from the path.
+	toolsWidth  [2]float32
+	toolsFolded bool
+	searchOpen  bool
+	profileOpen bool
+	navAt       string // the sidebar page shown, to notice a change
+	navRun      uint64 // counts changes, to replay the icon's gesture
+
+	queueMu sync.Mutex
+	queued  []func()
+}
+
+// New makes the app's state; Attach gives it its window.
+func New() *App {
+	start := "/files"
+	if r := os.Getenv("BAIDUNETGO_ROUTE"); r != "" {
+		start = r // for looking at a page from scripts
+	}
+	r := ui.NewRouter(start)
+	r.Animation = &motionPanel
+	return &App{router: r, order: baidu.Order{By: "name"}, gridView: os.Getenv("BAIDUNETGO_GRID") != ""}
+}
+
+// Attach gives the app the window that shows it.
+func (a *App) Attach(win *mygo.Window) {
+	a.win = win
+	a.store = OpenStore()
+	a.settings = loadSettings()
+	a.useSettings()
+	a.watchSystem()
+	win.OnFocus(func() { a.update(a.refocused) })
+	// Quitting, or closing the window, which quits, asks first while
+	// transfers go on.
+	mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
+		if a.askToQuit() {
+			e.PreventDefault()
+		}
+	})
+	win.OnClose(func(e *mygo.CloseEvent) {
+		if a.askToQuit() {
+			e.PreventDefault()
+		}
+	})
+	a.boot()
+}
+
+// askToQuit reports whether quitting must wait for the user, who is asked
+// whether to quit while transfers go on; quitting goes on if they say so.
+// It runs on the main thread.
+func (a *App) askToQuit() bool {
+	n := a.activeTransfers()
+	switch {
+	case n == 0 || a.quitOK.Load():
+		return false
+	case a.askingQuit:
+		return true
+	}
+	a.askingQuit = true
+	win := a.win
+	go func() {
+		r, err := mygo.Dialog.Message(mygo.MessageOptions{
+			Parent: win, Type: mygo.MessageWarning,
+			Message: "还有 " + itoa(n) + " 个传输在进行，要退出吗？",
+			Detail:  "退出后它们会暂停，下次打开时接着传。",
+			Buttons: []string{"退出", "取消"}, DefaultButton: 1, CancelButton: 1,
+		})
+		quit := err == nil && r.Button == 0
+		a.quitOK.Store(quit)
+		a.update(func() { a.askingQuit = false })
+		if quit {
+			mygo.App.Quit()
+		}
+	}()
+	return true
+}
+
+// copy puts text on the clipboard in the next frame, saying msg.
+func (a *App) copy(text, msg string) { a.copyText, a.copied = text, msg }
+
+// copyPicture puts a PNG picture on the clipboard in the next frame,
+// saying msg.
+func (a *App) copyPicture(png []byte, msg string) { a.copyPNG, a.copied = png, msg }
+
+// Shutdown saves what must outlast the app, as it quits.
+func (a *App) Shutdown() {
+	if a.sess != nil {
+		a.persist(a.sess.client)
+	}
+	if a.xfer != nil {
+		a.xfer.Close()
+	}
+}
+
+// update runs fn on the UI thread and redraws, from any goroutine. Without
+// a window, as in tests, it runs fn at once.
+func (a *App) update(fn func()) {
+	if a.win == nil {
+		a.queueMu.Lock()
+		a.queued = append(a.queued, fn)
+		a.queueMu.Unlock()
+		return
+	}
+	a.win.Update(fn)
+}
+
+// runQueued runs the updates queued without a window, in tests, which
+// build frames as a window would.
+func (a *App) runQueued(c *ui.Context) {
+	a.queueMu.Lock()
+	q := a.queued
+	a.queued = nil
+	a.queueMu.Unlock()
+	for _, fn := range q {
+		fn()
+	}
+	c.After(16 * time.Millisecond)
+}
+
+// View builds the window's interface.
+func (a *App) View(c *ui.Context) {
+	if a.win == nil {
+		a.runQueued(c)
+	}
+	if a.thumbs != nil {
+		a.thumbs.frame.Add(1)
+	}
+	a.passTime(c.Now())
+	if a.moving() {
+		c.Invalidate()
+	}
+	c.SetMenuPresentation(ui.PopoverMenus)
+	t, p := applyTheme(c)
+	switch a.phase {
+	case phaseBooting:
+		// Reading the saved session takes a moment: show the bare window,
+		// not a wait, until the netdisk or the sign-in screen comes in.
+		ui.Box(c).Fill().Background(t.Background)
+	case phaseLogin:
+		a.loginView(c, t, p)
+	default:
+		ui.Box(c).Key("shell").Fill().Transition(ui.ElementTransition{
+			Animation: &motionPanel,
+			Enter:     &ui.Motion{Scale: 0.97},
+		}).Children(func() { a.shell(c, t, p) })
+		if a.clipCheck && !a.dlg.open && a.pv == nil && a.renaming == nil && a.creating == nil {
+			a.clipCheck = false
+			a.checkClipboard(c)
+		}
+		a.dialogs(c, t, p)
+		a.previewOverlay(c, t, p)
+	}
+	a.toasts(c, t, p)
+	if a.copyText != "" || a.copyPNG != nil {
+		if a.copyText != "" {
+			c.WriteClipboard(a.copyText)
+			if link, pwd, ok := baidu.ParseShareLink(a.copyText); ok {
+				a.seenShare(link, pwd) // the app's own, not to open
+			}
+		} else {
+			writePNG(c, a.copyPNG)
+		}
+		msg := a.copied
+		if msg == "" {
+			msg = "已复制"
+		}
+		a.toast(msg, "success")
+		a.copyText, a.copyPNG, a.copied = "", nil, ""
+	}
+}

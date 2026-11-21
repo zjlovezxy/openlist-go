@@ -1,0 +1,15 @@
+package main
+
+// Each instance carries one cell of the element's captured content.
+// Motion is calculated once per cell, not once per output pixel.
+var Tint vec4
+var Inset vec2
+var SourceScale float
+
+func Fragment(dst vec4, pos vec2) vec4 {
+	source := vec2(instanceData(0), instanceData(1)) + pos*instanceData(2)
+	pixel := source*SourceScale + Inset
+	col := image0Sample(pixel)
+	glow := instanceData(4) * Tint.a
+	return vec4(mix(col.rgb, Tint.rgb*col.a, glow), col.a) * instanceData(3)
+}

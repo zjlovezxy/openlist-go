@@ -1,0 +1,355 @@
+package app
+
+import (
+	"context"
+	"path"
+
+	"github.com/egoist/mygo/ui"
+
+	"github.com/pengstem/baidunetgo/internal/baidu"
+)
+
+// dialogKind is what the open dialog asks.
+type dialogKind int
+
+const (
+	dlgNone dialogKind = iota
+	dlgMove
+	dlgCopy
+	dlgShare
+	dlgSaveLink
+	dlgOffline
+	dlgInfo
+	dlgConflict
+)
+
+// dialog is the dialog over the window, if any.
+type dialog struct {
+	kind  dialogKind
+	open  bool
+	name  string
+	files []baidu.File
+	dir   string // the folder it acts in
+	busy  bool
+	err   string
+
+	picker picker // the destination of a move or copy
+	clash  *clash // the names a destination already has
+}
+
+// chosen returns the files chosen in a listing, the row under the pointer
+// when it was right-clicked outside the choice included.
+func (l *listing) chosen() []baidu.File {
+	var out []baidu.File
+	for _, f := range l.files {
+		if f.FsID >= 0 && l.sel.Has(f.FsID) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func (a *App) ask(kind dialogKind, dir string, files []baidu.File) {
+	a.dlg = dialog{kind: kind, open: true, dir: dir, files: files}
+	switch kind {
+	case dlgMove, dlgCopy:
+		a.dlg.picker = picker{dir: dir}
+	}
+}
+
+// run does an operation on the netdisk, then reloads the folders it
+// changed and says how it went.
+func (a *App) run(op func(ctx context.Context, c *baidu.Client) error, dirs []string, done string, after func()) {
+	s := a.sess
+	if s == nil {
+		return
+	}
+	a.dlg.busy, a.dlg.err = true, ""
+	go func() {
+		err := op(context.Background(), s.client)
+		a.update(func() {
+			a.dlg.busy = false
+			if err != nil {
+				a.dlg.err = err.Error()
+				if !a.dlg.open {
+					a.toast(err.Error(), "error")
+				}
+				return
+			}
+			a.dlg.open = false
+			for _, d := range dirs {
+				a.reload(d)
+			}
+			if after != nil {
+				after()
+			}
+			if done != "" {
+				a.toast(done, "success")
+			}
+		})
+	}()
+}
+
+func paths(files []baidu.File) []string {
+	out := make([]string, len(files))
+	for i, f := range files {
+		out[i] = f.Path
+	}
+	return out
+}
+
+func countLabel(files []baidu.File) string {
+	if len(files) == 1 {
+		return "「" + files[0].Name + "」"
+	}
+	return itoa(len(files)) + " 项"
+}
+
+// remove moves files to the recycle bin at once, as Finder does, with no
+// question first: they dissolve where they are, and a toast offers to
+// undo it. It works apart from the dialogs (a.run), which another dialog
+// opened meanwhile could be closed by.
+func (a *App) remove(dir string, files []baidu.File) {
+	s := a.sess
+	if s == nil || len(files) == 0 {
+		return
+	}
+	ids := make([]int64, len(files))
+	for i, f := range files {
+		ids[i] = f.FsID
+	}
+	if l := a.listings[dir]; l != nil {
+		// They dissolve at once, then leave; the reload confirms it.
+		a.dissolve(l, ids)
+		l.sel.Clear()
+	}
+	go func() {
+		err := s.client.Delete(context.Background(), paths(files))
+		a.update(func() {
+			a.reload(dir)
+			if err != nil {
+				a.spare(ids)
+				a.toast(err.Error(), "error")
+				return
+			}
+			a.pendingToasts = append(a.pendingToasts, ui.Toast{
+				Title: "已将" + countLabel(files) + "移到回收站", Type: "success", Action: "撤销", Timeout: undoToast,
+				OnAction: func() {
+					a.spare(ids)
+					a.run(func(ctx context.Context, c *baidu.Client) error { return c.Restore(ctx, ids) }, []string{dir}, "已还原", nil)
+				},
+			})
+			a.recycleDirty = true
+		})
+	}()
+}
+
+// dialogs builds the dialog open, if any.
+func (a *App) dialogs(c *ui.Context, t *ui.Theme, p *palette) {
+	d := &a.dlg
+	if d.kind == dlgNone {
+		return
+	}
+	open := d.open
+	ui.DialogBase(c, &d.open, func(backdrop, panel ui.Element) {
+		backdrop.Background(p.Scrim)
+		width := float32(420)
+		if d.kind == dlgSaveLink {
+			width = 480
+		}
+		panel.Width(width).Padding(20).Gap(14).Radius(14).Background(p.Card).Border(1, p.Hairline).
+			Shadow(0, 16, 40, -12, p.Shadow).Transition(popIn)
+		switch d.kind {
+		case dlgMove, dlgCopy:
+			a.pickerDialog(c, t, p)
+		case dlgShare:
+			a.shareDialog(c, t, p)
+		case dlgSaveLink:
+			a.saveLinkDialog(c, t, p)
+		case dlgOffline:
+			a.offlineDialog(c, t, p)
+		case dlgInfo:
+			a.infoDialog(c, t, p)
+		case dlgConflict:
+			a.conflictDialog(c, t, p)
+		}
+	})
+	if open && !d.open && d.busy {
+		d.open = true // keep it while the netdisk works
+	}
+}
+
+func dirLabel(dir string) string {
+	if dir == "/" {
+		return "我的文件"
+	}
+	return path.Base(dir)
+}
+
+func dialogTitle(c *ui.Context, t *ui.Theme, title, detail string) {
+	ui.Column(c).Gap(4).Children(func() {
+		ui.Text(c, title).FontSize(15).FontWeight(600)
+		if detail != "" {
+			ui.Text(c, detail).TextColor(t.TextMuted).SingleLine()
+		}
+	})
+}
+
+// dialogButtons are the dialog's buttons, the main one last; it reports
+// whether the main one was pressed.
+func (a *App) dialogButtons(c *ui.Context, t *ui.Theme, p *palette, label string, danger, disabled bool) bool {
+	d := &a.dlg
+	if d.err != "" {
+		ui.Text(c, d.err).TextColor(t.Danger).Transition(rowEnter)
+	}
+	pressed := false
+	ui.Row(c).Gap(8).Justify(ui.End).Margin(4, 0, 0).Children(func() {
+		if pill(c, t, p, "", "取消", false).Disabled(d.busy).Clicked() {
+			d.open = false
+		}
+		b := pill(c, t, p, "", label, true).Disabled(disabled || d.busy)
+		if d.kind == dlgMove || d.kind == dlgCopy || d.kind == dlgShare {
+			b.AutoFocus() // Enter presses it
+		}
+		if danger {
+			b.Background(t.Danger).TextColor(ui.Hex("#ffffff"))
+		}
+		if d.busy {
+			b.Children(func() { ui.Spinner(c).TextColor(t.AccentText) })
+		}
+		pressed = b.Clicked()
+	})
+	return pressed
+}
+
+// fileActions handles the browser's keys on the files chosen.
+func (a *App) fileActions(c *ui.Context, l *listing) {
+	if a.dlg.open || a.pv != nil || a.renaming != nil || a.creating != nil {
+		return
+	}
+	files := l.chosen()
+	if l.dir != "/" && (c.Shortcut(ui.Alt, ui.KeyUp) || c.Shortcut(ui.Cmd, ui.KeyUp)) {
+		a.router.Push(filesRoute(path.Dir(l.dir)))
+	}
+	if c.Shortcut(ui.Cmd|ui.Shift, ui.KeyN) {
+		a.newFolder(l, l.makerAt)
+	}
+	if c.Shortcut(ui.Cmd, ui.KeyR) {
+		a.reload(l.dir)
+	}
+	if c.Shortcut(ui.Cmd, ui.KeyV) {
+		if text := c.ReadClipboard(); len(text) < 4096 {
+			if _, _, ok := baidu.ParseShareLink(text); ok {
+				a.openLink(text, false)
+			}
+		}
+	}
+	if c.Shortcut(ui.Cmd, ui.Key1) {
+		a.gridView = false
+	}
+	if c.Shortcut(ui.Cmd, ui.Key2) {
+		a.gridView = true
+	}
+	if len(files) == 0 {
+		return
+	}
+	// Space looks at the file chosen, as Quick Look does; Cmd-Down opens
+	// it, a folder too.
+	if len(files) == 1 && !files[0].IsDir && c.Shortcut(0, ui.KeySpace) {
+		a.open(files[0])
+	}
+	if len(files) == 1 && c.Shortcut(ui.Cmd, ui.KeyDown) {
+		a.open(files[0])
+	}
+	if c.Shortcut(0, ui.KeyF2) && len(files) == 1 {
+		a.rename(l, files[0])
+	}
+	if c.Shortcut(0, ui.KeyDelete) || c.Shortcut(ui.Cmd, ui.KeyBackspace) {
+		a.remove(l.dir, files)
+	}
+	if c.Shortcut(ui.Cmd, ui.KeyI) {
+		a.showInfo(l.dir, files)
+	}
+	if c.Shortcut(0, ui.KeyEscape) {
+		l.sel.Clear()
+	}
+}
+
+// selBarLabels is the page's width under which the selection bar's
+// actions drop their labels and keep only their icons.
+const selBarLabels = 660
+
+// selectionBar floats over the browser while files are chosen, with what
+// can be done to them. On a page narrower than selBarLabels (last frame's
+// width) the actions show only their icons, so the bar never squeezes the
+// count into a column. The labels fold away and open out over motionPanel
+// through an animated value, not a Transition: they change as the window
+// resizes, and MyGo skips layout transitions on those frames.
+func (a *App) selectionBar(c *ui.Context, t *ui.Theme, p *palette, l *listing, width float32) {
+	files := l.chosen()
+	if len(files) == 0 {
+		return
+	}
+	labels := width == 0 || width >= selBarLabels
+	bar := ui.Row(c).Key("selbar").Absolute().Bottom(40).Attach(ui.AnchorBottom, ui.AnchorBottom).
+		Padding(4, 4, 4, 14).Gap(2).Radius(12).AlignItems(ui.Center).
+		Background(p.Card).Border(1, p.Hairline).Shadow(0, 8, 24, -10, p.Shadow).
+		Transition(ui.ElementTransition{Animation: &motionFade, Enter: &ui.Motion{Y: 8, Opacity: 0}, Exit: &ui.Motion{Opacity: 0}})
+	shown := bar.AnimateTo("labels", map[bool]float32{true: 1, false: 0}[labels], motionPanel)
+	bar.Children(func() {
+		ui.Text(c, "已选 "+itoa(len(files))+" 项").FontWeight(500).Margin(0, 10, 0, 0).FontFeatures("tnum").
+			SingleLine().Shrink(0).ContentTransition(ui.ContentTransition{Numeric: true})
+		button := func(ic, label string) ui.Element {
+			b := ui.ButtonBase(c).Label(label).Height(28).PaddingX(7 + 3*shown).Radius(7).Gap(6 * shown).AlignItems(ui.Center).Shrink(0)
+			if !labels {
+				b.Tooltip(label)
+			}
+			b.Children(func() {
+				ui.Icon(c, icon(ic)).FontSize(15)
+				if shown > 0 {
+					w, _ := c.MeasureText(0, ui.Span{Text: label})
+					ui.Box(c).Width(w * shown).Shrink(0).Clip().Opacity(shown).Children(func() {
+						ui.Text(c, label).SingleLine().Width(w).Shrink(0)
+					})
+				}
+			})
+			return b
+		}
+		action := func(ic, label string) bool {
+			b := button(ic, label)
+			if b.Hovered() {
+				b.Background(p.Hover)
+			}
+			return b.Clicked()
+		}
+		if action("download", "下载") {
+			a.download(files)
+		}
+		if action("share-2", "分享") {
+			a.share(files)
+		}
+		if action("move", "移动") {
+			a.ask(dlgMove, l.dir, files)
+		}
+		if action("copy", "复制") {
+			a.ask(dlgCopy, l.dir, files)
+		}
+		if len(files) == 1 && action("pencil", "重命名") {
+			a.rename(l, files[0])
+		}
+		if action("info", "详情") {
+			a.showInfo(l.dir, files)
+		}
+		del := button("trash-2", "删除").TextColor(t.Danger)
+		if del.Hovered() {
+			del.Background(t.Danger.Alpha(0.1))
+		}
+		if del.Clicked() {
+			a.remove(l.dir, files)
+		}
+		ui.Divider(c).Height(20).Margin(0, 4)
+		if iconButton(c, t, p, "x", "取消选择").Clicked() {
+			l.sel.Clear()
+		}
+	})
+}
