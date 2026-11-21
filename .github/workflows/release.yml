@@ -102,6 +102,8 @@ jobs:
           - { name: Windows, os: ubuntu-latest, platform: "windows/amd64,windows/arm64" }
           # Signing (ad hoc) and the disk image need macOS.
           - { name: macOS, os: macos-latest, platform: "darwin/universal" }
+          # Android build (arm64-v8a)
+          - { name: Android, os: ubuntu-latest, platform: "android/arm64" }
     steps:
       - uses: actions/checkout@v7
         with:
@@ -112,9 +114,20 @@ jobs:
       - name: Install NSIS, for the Windows installers
         if: matrix.name == 'Windows'
         run: sudo apt-get update && sudo apt-get install -y nsis
+      - name: Setup Java
+        if: matrix.name == 'Android'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Setup Android SDK and NDK
+        if: matrix.name == 'Android'
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools platforms;android-36 ndk;27.1.12297006 cmake;3.22.1
       - name: Build
         env:
-          GOFLAGS: -tags=mygo_nowebview
+          GOFLAGS: ${{ matrix.name == 'Windows' && '-tags=mygo_nowebview' || '' }}
         run: go tool mygo build -platform "${{ matrix.platform }}"
       - name: Upload to the release
         env:
@@ -130,6 +143,15 @@ jobs:
             zip="build/OpenListGo-$VERSION-windows-$arch.zip"
             (cd "$dir" && zip -qr "$OLDPWD/$zip" . -x '*-setup-*.exe')
             files+=("$zip")
+          done
+          # The Android app: include APK and AAB, plus an explicit arm64-named APK
+          for apk in build/android/*.apk; do
+            arm64_apk="${apk%.apk}-arm64.apk"
+            cp "$apk" "$arm64_apk"
+            files+=("$apk" "$arm64_apk")
+          done
+          for aab in build/android/*.aab; do
+            files+=("$aab")
           done
           printf '%s\n' "${files[@]}"
           test ${#files[@]} -gt 0
