@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/audio"
 	_ "github.com/egoist/mygo/audio/mp3"
 	_ "github.com/egoist/mygo/audio/vorbis"
@@ -61,6 +62,9 @@ type previewState struct {
 	markdown string
 	source   bool // show a Markdown file's source
 
+	tooLarge   bool
+	limitBytes int64
+
 	doc       *pdf.Doc
 	pages     []pdfPage
 	pdfBase   float32 // how wide the pages fit the window
@@ -87,15 +91,15 @@ func (pv *previewState) close() {
 }
 
 // openPreview shows a file's content: in the overlay for what the app
-// shows itself, in mpv for video and audio it does not play.
+// shows itself, in external players for video and audio it does not play.
 func (a *App) openPreview(f baidu.File) {
 	k := kindOf(&f)
 	switch {
 	case k == kindVideo:
-		a.playInMPV(f)
+		a.playMedia(f)
 		return
 	case k == kindAudio && !inAppAudio(f.Name):
-		a.playInMPV(f)
+		a.playMedia(f)
 		return
 	}
 	if a.pv != nil {
@@ -158,11 +162,18 @@ func (a *App) loadPreview(pv *previewState) {
 	case kindAudio:
 		a.startAudio(ctx, pv)
 		return
+	case kindDoc, kindSheet:
+		return // rendered with officeDocumentView
 	default:
 		return // shows what it is, with nothing to load
 	}
-	pv.loading = true
 	f := pv.file
+	if f.Size > limit {
+		pv.tooLarge = true
+		pv.limitBytes = limit
+		return
+	}
+	pv.loading = true
 	go func() {
 		last := time.Now()
 		data, err := remote.ReadAll(ctx, s.client, baidu.Expired, f.Path, f.Size, limit, func(done int64) {
@@ -177,7 +188,15 @@ func (a *App) loadPreview(pv *previewState) {
 			return
 		}
 		if err != nil {
-			a.update(func() { pv.loading, pv.err = false, previewError(err) })
+			a.update(func() {
+				pv.loading = false
+				if errors.Is(err, remote.ErrTooLarge) {
+					pv.tooLarge = true
+					pv.limitBytes = limit
+				} else {
+					pv.err = previewError(err)
+				}
+			})
 			return
 		}
 		switch pv.kind {
@@ -287,28 +306,83 @@ func (a *App) startAudio(ctx context.Context, pv *previewState) {
 	}()
 }
 
-// playInMPV streams a file in mpv.
+// playInMPV streams a file in mpv or other player (kept for compatibility).
 func (a *App) playInMPV(f baidu.File) {
+	a.playMedia(f)
+}
+
+// playMedia streams a file in an external player (mpv, VLC, PotPlayer, IINA) or
+// the system default player.
+func (a *App) playMedia(f baidu.File) {
 	s := a.sess
 	if s == nil {
-		return
-	}
-	mpv, err := player.Find(a.settings.MPV)
-	if err != nil {
-		a.toast(err.Error(), "error")
 		return
 	}
 	if a.stream == nil {
 		a.toast("本地串流服务没有启动", "error")
 		return
 	}
-	// mpv reads through the app's loopback server, which turns its
-	// open-ended ranges into the bounded ones the netdisk serves.
-	if err := player.Play(mpv, a.stream.URL(f.Path, f.Size), f.Name, nil); err != nil {
-		a.toast("播放失败："+err.Error(), "error")
+	streamURL := a.stream.URL(f.Path, f.Size)
+	if p, err := player.Find(a.settings.MPV); err == nil {
+		if playErr := player.Play(p, streamURL, f.Name, nil); playErr == nil {
+			a.toast("正在启动播放器播放「"+f.Name+"」", "")
+			return
+		}
+	}
+	// Fallback to opening via system default media player
+	go func() {
+		_ = mygo.Shell.OpenExternal(streamURL)
+	}()
+	a.toast("正在调用系统播放器播放「"+f.Name+"」", "")
+}
+
+// openWithSystem opens a file with the system default application.
+func (a *App) openWithSystem(f baidu.File) {
+	if a.sess == nil || a.sess.client == nil {
 		return
 	}
-	a.toast("正在用 mpv 播放「"+f.Name+"」", "")
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		u, err := a.sess.client.DownloadURL(ctx, f.Path)
+		if (err != nil || u == "") && a.stream != nil {
+			u = a.stream.URL(f.Path, f.Size)
+			err = nil
+		}
+		if err != nil || u == "" {
+			a.update(func() { a.toast("获取文件地址失败", "error") })
+			return
+		}
+		a.update(func() {
+			a.toast("正在调用系统应用打开「"+f.Name+"」", "")
+			go func() {
+				_ = mygo.Shell.OpenExternal(u)
+			}()
+		})
+	}()
+}
+
+// copyDirectLink gets the file's direct download URL and copies it to clipboard.
+func (a *App) copyDirectLink(f baidu.File) {
+	if a.sess == nil || a.sess.client == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		u, err := a.sess.client.DownloadURL(ctx, f.Path)
+		if (err != nil || u == "") && a.stream != nil {
+			u = a.stream.URL(f.Path, f.Size)
+			err = nil
+		}
+		if err != nil || u == "" {
+			a.update(func() { a.toast("获取下载直链失败", "error") })
+			return
+		}
+		a.update(func() {
+			a.copy(u, "已复制下载直链")
+		})
+	}()
 }
 
 // step shows the picture before (-1) or after (+1) in its folder.
@@ -455,12 +529,20 @@ func (a *App) previewBar(c *ui.Context, t *ui.Theme, p *palette, pv *previewStat
 			}
 		}
 		if pv.kind == kindAudio || pv.kind == kindVideo {
-			if glassButton(c, "external-link", "在 mpv 中播放").Clicked() {
+			if glassButton(c, "external-link", "在外部播放器中播放").Clicked() {
 				if pv.player != nil {
 					pv.player.Pause()
 				}
-				a.playInMPV(pv.file)
+				a.playMedia(pv.file)
 			}
+		}
+		if pv.kind == kindDoc || pv.kind == kindSheet {
+			if glassButton(c, "external-link", "用系统应用打开").Clicked() {
+				a.openWithSystem(pv.file)
+			}
+		}
+		if glassButton(c, "link", "复制直链").Clicked() {
+			a.copyDirectLink(pv.file)
 		}
 		if glassButton(c, "download", "下载").Clicked() {
 			a.download([]baidu.File{pv.file})
@@ -527,8 +609,12 @@ func glassButton(c *ui.Context, ic, label string) ui.Element {
 
 func (a *App) previewBody(c *ui.Context, t *ui.Theme, p *palette, pv *previewState) {
 	switch {
+	case pv.tooLarge:
+		a.previewTooLarge(c, t, p, pv)
 	case pv.err != "":
 		a.previewMessage(c, t, p, pv, "triangle-alert", pv.err)
+	case pv.kind == kindDoc || pv.kind == kindSheet:
+		a.officeDocumentView(c, t, p, pv)
 	case pv.kind == kindImage:
 		a.imageViewer(c, t, p, pv)
 	case pv.loading:
@@ -560,15 +646,65 @@ func (a *App) previewLoading(c *ui.Context, t *ui.Theme, p *palette, pv *preview
 	})
 }
 
-func (a *App) previewMessage(c *ui.Context, t *ui.Theme, p *palette, pv *previewState, ic, msg string) {
-	ui.Column(c).Width(360).Padding(24).Gap(12).Radius(8).AlignItems(ui.Center).Background(p.Card).
+func (a *App) officeDocumentView(c *ui.Context, t *ui.Theme, p *palette, pv *previewState) {
+	lk := pv.kind.look(p)
+	ui.Column(c).Width(420).Padding(32, 24).Gap(14).Radius(12).AlignItems(ui.Center).Background(p.Card).
 		Border(1, p.Hairline).Shadow(0, 16, 40, -12, ui.RGBA(0, 0, 0, 0.45)).Transition(popIn).Children(func() {
-		ui.Icon(c, icon(ic)).FontSize(28).TextColor(p.Faint)
-		ui.Text(c, pv.file.Name).FontWeight(500).TextAlign(ui.Center).MaxLines(2)
-		ui.Text(c, msg).TextColor(t.TextMuted).TextAlign(ui.Center)
-		ui.Row(c).Gap(8).Margin(6, 0, 0).Children(func() {
+		ui.Icon(c, icon(lk.icon)).FontSize(48).TextColor(lk.color)
+		ui.Text(c, pv.file.Name).FontWeight(600).FontSize(t.Rem(1.05)).TextAlign(ui.Center).MaxLines(2)
+		ui.Text(c, lk.label+" · "+humanSize(pv.file.Size)).FontSize(t.Rem(0.85)).TextColor(t.TextMuted)
+		ui.Text(c, "Office 文档可通过本地办公软件（WPS / Office 等）打开，或直接下载到本地查看。").
+			FontSize(t.Rem(0.85)).TextColor(t.TextMuted).TextAlign(ui.Center)
+		ui.Row(c).Gap(10).Margin(10, 0, 0).Children(func() {
+			if pill(c, t, p, "external-link", "用系统应用打开", true).Clicked() {
+				a.openWithSystem(pv.file)
+			}
+			if pill(c, t, p, "download", "下载到本地", false).Clicked() {
+				a.download([]baidu.File{pv.file})
+			}
+			if pill(c, t, p, "copy", "复制直链", false).Clicked() {
+				a.copyDirectLink(pv.file)
+			}
+		})
+	})
+}
+
+func (a *App) previewTooLarge(c *ui.Context, t *ui.Theme, p *palette, pv *previewState) {
+	lk := pv.kind.look(p)
+	ui.Column(c).Width(420).Padding(32, 24).Gap(14).Radius(12).AlignItems(ui.Center).Background(p.Card).
+		Border(1, p.Hairline).Shadow(0, 16, 40, -12, ui.RGBA(0, 0, 0, 0.45)).Transition(popIn).Children(func() {
+		ui.Icon(c, icon("alert-circle")).FontSize(48).TextColor(t.Warning)
+		ui.Text(c, pv.file.Name).FontWeight(600).FontSize(t.Rem(1.05)).TextAlign(ui.Center).MaxLines(2)
+		msg := "文件大小为 " + humanSize(pv.file.Size) + "，已超过" + lk.label + "预览上限（" + humanSize(pv.limitBytes) + "）。"
+		ui.Text(c, msg).FontSize(t.Rem(0.85)).TextColor(t.TextMuted).TextAlign(ui.Center)
+		ui.Text(c, "为保证应用流畅运行，避免占用过多内存，请下载到本地或使用系统应用查看。").
+			FontSize(t.Rem(0.82)).TextColor(t.TextMuted).TextAlign(ui.Center)
+		ui.Row(c).Gap(10).Margin(10, 0, 0).Children(func() {
 			if pill(c, t, p, "download", "下载到本地", true).Clicked() {
 				a.download([]baidu.File{pv.file})
+			}
+			if pill(c, t, p, "external-link", "用系统应用打开", false).Clicked() {
+				a.openWithSystem(pv.file)
+			}
+			if pill(c, t, p, "copy", "复制直链", false).Clicked() {
+				a.copyDirectLink(pv.file)
+			}
+		})
+	})
+}
+
+func (a *App) previewMessage(c *ui.Context, t *ui.Theme, p *palette, pv *previewState, ic, msg string) {
+	ui.Column(c).Width(380).Padding(28, 24).Gap(12).Radius(12).AlignItems(ui.Center).Background(p.Card).
+		Border(1, p.Hairline).Shadow(0, 16, 40, -12, ui.RGBA(0, 0, 0, 0.45)).Transition(popIn).Children(func() {
+		ui.Icon(c, icon(ic)).FontSize(36).TextColor(p.Faint)
+		ui.Text(c, pv.file.Name).FontWeight(500).TextAlign(ui.Center).MaxLines(2)
+		ui.Text(c, msg).TextColor(t.TextMuted).TextAlign(ui.Center)
+		ui.Row(c).Gap(8).Margin(8, 0, 0).Children(func() {
+			if pill(c, t, p, "download", "下载到本地", true).Clicked() {
+				a.download([]baidu.File{pv.file})
+			}
+			if pill(c, t, p, "external-link", "用系统应用打开", false).Clicked() {
+				a.openWithSystem(pv.file)
 			}
 		})
 	})

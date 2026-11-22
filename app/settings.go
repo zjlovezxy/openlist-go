@@ -6,29 +6,24 @@ import (
 	"path/filepath"
 
 	"github.com/egoist/mygo"
-
-	"github.com/pengstem/baidunetgo/internal/tune"
 )
 
 // settings are the user's choices, kept as JSON in the app's data
 // directory.
 type settings struct {
-	LastServer   string `json:"last_server,omitempty"`   // last used OpenList server URL
-	LastUsername string `json:"last_username,omitempty"` // last used OpenList username
-	MPV          string `json:"mpv,omitempty"`           // mpv's path, found on its own when empty
-	DownloadDir  string `json:"download_dir,omitempty"`  // where downloads go, Downloads when empty
-	Threads      int    `json:"threads,omitempty"`       // connections per download
-	Parallel     int    `json:"parallel,omitempty"`      // downloads at once
-	Upload       int    `json:"upload,omitempty"`        // connections per upload
-	PreviewMB    int    `json:"preview_mb,omitempty"`    // largest picture or text previewed, in MB
-	DownLimit    int    `json:"down_limit,omitempty"`    // MB/s all downloads together may take, 0 for any
-	UpLimit      int    `json:"up_limit,omitempty"`      // MB/s all uploads together may take, 0 for any
-	// Manual keeps Threads, Parallel and Upload as set; else they follow
-	// the membership and the last measurement, as the rest always does.
-	Manual bool `json:"manual_transfer,omitempty"`
-	// Tune is the last measurement of download speeds, and the
-	// membership it was made with.
-	Tune *tuneRecord `json:"tune,omitempty"`
+	LastServer     string `json:"last_server,omitempty"`      // last used OpenList server URL
+	LastUsername   string `json:"last_username,omitempty"`    // last used OpenList username
+	MPV            string `json:"mpv,omitempty"`              // external player path, found automatically when empty
+	DownloadDir    string `json:"download_dir,omitempty"`     // where downloads go, Downloads when empty
+	Threads        int    `json:"threads,omitempty"`          // connections per download
+	Parallel       int    `json:"parallel,omitempty"`         // downloads at once
+	Upload         int    `json:"upload,omitempty"`           // connections per upload
+	PreviewMB      int    `json:"preview_mb,omitempty"`       // legacy preview limit
+	PreviewImageMB int    `json:"preview_image_mb,omitempty"` // largest picture previewed, in MB
+	PreviewTextMB  int    `json:"preview_text_mb,omitempty"`  // largest text previewed, in MB
+	PreviewPDFMB   int    `json:"preview_pdf_mb,omitempty"`   // largest PDF previewed, in MB
+	DownLimit      int    `json:"down_limit,omitempty"`       // MB/s all downloads together may take, 0 for any
+	UpLimit        int    `json:"up_limit,omitempty"`         // MB/s all uploads together may take, 0 for any
 	// SkipImport stops signing in with another client's account by
 	// itself, once the user signed out.
 	SkipImport bool `json:"skip_pcs_import,omitempty"`
@@ -37,11 +32,6 @@ type settings struct {
 	// SeenShare is the last share link found on the clipboard, and its
 	// password, opened once and not again.
 	SeenShare string `json:"seen_share,omitempty"`
-}
-
-type tuneRecord struct {
-	VIP    int          `json:"vip"`
-	Result *tune.Result `json:"result"`
 }
 
 func settingsPath() string {
@@ -83,16 +73,40 @@ func (s settings) threads() int {
 
 func (s settings) parallel() int {
 	if s.Parallel <= 0 {
-		return 2
+		return 3
 	}
 	return s.Parallel
 }
 
 func (s settings) upload() int {
 	if s.Upload <= 0 {
-		return 4
+		return 2
 	}
 	return s.Upload
+}
+
+func (s settings) imageLimitMB() int {
+	if s.PreviewImageMB > 0 {
+		return s.PreviewImageMB
+	}
+	if s.PreviewMB > 0 {
+		return s.PreviewMB
+	}
+	return 50
+}
+
+func (s settings) textLimitMB() int {
+	if s.PreviewTextMB > 0 {
+		return s.PreviewTextMB
+	}
+	return 8
+}
+
+func (s settings) pdfLimitMB() int {
+	if s.PreviewPDFMB > 0 {
+		return s.PreviewPDFMB
+	}
+	return 100
 }
 
 func (s settings) downloadDir() string {

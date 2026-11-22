@@ -61,10 +61,6 @@ type App struct {
 	found         searchState
 	xfer          *transfer.Manager
 	stream        *stream.Server
-	tuning        bool   // measuring download speeds
-	tuneErr       string // why the last measurement failed
-	tuneStage     string // what the measurement measures now
-	tuneOpen      bool   // the measurement's details unfolded in settings
 	transfers     transfersState
 	sys           systemState
 	shareForm     shareForm

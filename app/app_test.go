@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"time"
@@ -185,15 +184,14 @@ func TestSettingsPage(t *testing.T) {
 	save(t, tt, "settings-dark")
 }
 
-// TestSettingsNumbers chooses numbers from their pop-ups, the counts
-// showing only once they are chosen by hand.
+// TestSettingsNumbers chooses numbers from their pop-ups.
 func TestSettingsNumbers(t *testing.T) {
 	a, tt, _ := signedIn(t)
 	a.router.Push("/settings")
 	waitFor(t, tt, "下载位置")
 	tt.Advance(time.Second)
-	if tt.HasText("每个文件的连接数") {
-		t.Error("counts shown while tuned automatically")
+	if !tt.HasText("每个文件的连接数") {
+		t.Error("transfer counts should be directly visible")
 	}
 	choose := func(shown, item string) {
 		t.Helper()
@@ -210,46 +208,13 @@ func TestSettingsNumbers(t *testing.T) {
 		t.Errorf("limits %d down, %d up after choosing 10 for downloads", a.settings.DownLimit, a.settings.UpLimit)
 	}
 
-	// The switch is at the end of its row, under 重测's.
-	row, _ := tt.Find("自动优化传输")
-	end, _ := tt.Find("重测")
-	tt.ClickAt(end.X+end.W-12, row.Y+row.H/2)
-	tt.Advance(time.Second)
-	if !a.settings.Manual || !tt.HasText("每个文件的连接数") {
-		t.Fatalf("manual %v, counts not shown after the switch; texts %q", a.settings.Manual, tt.Texts())
-	}
-	choose(itoa(a.transferConfig().Threads), "4")
-	if got := a.transferConfig().Threads; got != 4 {
-		t.Errorf("threads %d after choosing 4", got)
+	choose(itoa(a.transferConfig().Threads), "8")
+	if got := a.transferConfig().Threads; got != 8 {
+		t.Errorf("threads %d after choosing 8", got)
 	}
 	tt.SetDark(true)
 	tt.Advance(500 * time.Millisecond)
 	save(t, tt, "settings-numbers")
-}
-
-func TestTuneFromSettings(t *testing.T) {
-	old := tunePer
-	tunePer = 100 * time.Millisecond
-	t.Cleanup(func() { tunePer = old })
-	a, tt, _ := signedIn(t)
-	a.router.Push("/settings")
-	waitFor(t, tt, "重测")
-	tt.Click("重测")
-	waitFor(t, tt, "已根据测速优化")
-	for _, want := range []string{"下载线路", "每个文件的连接", "每次请求的块", "同时下载的文件", "每个上传的连接", "播放与预览"} {
-		if !tt.HasText(want) {
-			t.Errorf("%q missing; texts %q", want, tt.Texts())
-		}
-	}
-	cfg := a.transferConfig()
-	if len(cfg.Hosts) != 2 || a.xfer.Block != cfg.Block || a.xfer.Upload != cfg.Upload {
-		t.Errorf("config %+v not in force (block %d, upload %d)", cfg, a.xfer.Block, a.xfer.Upload)
-	}
-	if first, _ := a.sess.client.DownloadURL(context.Background(), "/安装包.dmg"); baidu.Host(first) != cfg.Hosts[0] {
-		t.Errorf("link %s not on the fastest host %s", first, cfg.Hosts[0])
-	}
-	tt.Advance(time.Second)
-	save(t, tt, "settings-tune")
 }
 
 // TestGridLongNames keeps a name with no spaces, as release names are,

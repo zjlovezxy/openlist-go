@@ -285,7 +285,6 @@ func (a *App) onSignedIn() {
 		log.Printf("stream: %v", err)
 	}
 	a.useSettings()
-	a.maybeTune()
 }
 
 // onSignedOut stops the work of the session.

@@ -37,11 +37,9 @@ func (a *App) useSettings() {
 		a.sess.client.SetHosts(cfg.Hosts)
 	}
 	a.useStreaming(cfg)
-	if mb := a.settings.PreviewMB; mb > 0 {
-		imageLimit = int64(mb) << 20
-		textLimit = int64(min(mb, 64)) << 20
-		pdfLimit = int64(max(mb, 200)) << 20
-	}
+	imageLimit = int64(a.settings.imageLimitMB()) << 20
+	textLimit = int64(a.settings.textLimitMB()) << 20
+	pdfLimit = int64(a.settings.pdfLimitMB()) << 20
 }
 
 func (a *App) settingsPage(c *ui.Context, t *ui.Theme, p *palette) {
@@ -50,21 +48,34 @@ func (a *App) settingsPage(c *ui.Context, t *ui.Theme, p *palette) {
 		ui.Column(c).FillWidth().MaxWidth(600).Margin(0, ui.Auto).Gap(24).Children(func() {
 			a.accountSection(c, t, p)
 			a.tuneSection(c, t, p)
-			section(c, t, p, "预览", func() {
-				if s.PreviewMB == 0 {
-					s.PreviewMB = 50
-				}
-				settingRow(c, t, p, "内存预览上限", "MB", "更大的图片、文档会先下载再打开", func() {
-					if numberChoice(c, t, p, &s.PreviewMB, []int{20, 50, 100, 200, 500, 1000, 2000}, "", "内存预览上限") {
+			section(c, t, p, "预览与播放", func() {
+				imgMB := s.imageLimitMB()
+				settingRow(c, t, p, "图片预览上限", "MB", "超过上限提示下载或外部打开", func() {
+					if numberChoice(c, t, p, &imgMB, []int{10, 20, 50, 100, 200}, "", "图片预览上限") {
+						s.PreviewImageMB = imgMB
+						a.applySettings()
+					}
+				})
+				txtMB := s.textLimitMB()
+				settingRow(c, t, p, "文本/代码预览上限", "MB", "超过上限不加载至编辑器", func() {
+					if numberChoice(c, t, p, &txtMB, []int{2, 4, 8, 16, 32}, "", "文本/代码预览上限") {
+						s.PreviewTextMB = txtMB
+						a.applySettings()
+					}
+				})
+				pdfMB := s.pdfLimitMB()
+				settingRow(c, t, p, "PDF 预览上限", "MB", "超过上限建议外部阅读器打开", func() {
+					if numberChoice(c, t, p, &pdfMB, []int{50, 100, 200, 500}, "", "PDF 预览上限") {
+						s.PreviewPDFMB = pdfMB
 						a.applySettings()
 					}
 				})
 				path, err := player.Find(s.MPV)
 				detail := tildePath(path)
 				if err != nil {
-					detail = "未找到，视频无法播放"
+					detail = "系统默认播放器 (无需额外配置)"
 				}
-				settingRow(c, t, p, "mpv 播放器", "", detail, func() {
+				settingRow(c, t, p, "外部播放器 (可选)", "", detail, func() {
 					if s.MPV != "" && pill(c, t, p, "", "自动查找", false).Clicked() {
 						s.MPV = ""
 						a.applySettings()
@@ -130,7 +141,7 @@ func (a *App) pickDownloadDir() {
 func (a *App) pickMPV() {
 	win := a.win
 	go func() {
-		files, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: win, Title: "选择 mpv"})
+		files, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: win, Title: "选择外部播放器"})
 		if err != nil || len(files) == 0 {
 			return
 		}

@@ -1,5 +1,5 @@
-// Package player plays netdisk media in mpv, which streams it from its
-// link with the headers the netdisk asks for: nothing touches the disk.
+// Package player plays netdisk media in external players (mpv, PotPlayer,
+// VLC, IINA, etc.), which stream media from the link.
 package player
 
 import (
@@ -9,49 +9,75 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
-// ErrNoMPV is what Find returns when mpv is not installed.
-var ErrNoMPV = errors.New("没有找到 mpv，请安装 mpv 或在设置中指定它的位置")
+// ErrNoPlayer is what Find returns when no supported external player is found.
+var ErrNoPlayer = errors.New("未找到外部播放器，请在设置中指定它的位置或使用系统默认播放器")
 
-// Find returns the path of mpv: custom when set, else from PATH or where
-// the platform's installers put it.
+// ErrNoMPV is kept for backward compatibility.
+var ErrNoMPV = ErrNoPlayer
+
+// Find returns the path of a player: custom when set, else searches for
+// mpv, potplayer, vlc, or iina from PATH or where platform installers put them.
 func Find(custom string) (string, error) {
 	if custom != "" {
 		if _, err := os.Stat(custom); err == nil {
 			return custom, nil
 		}
-		return "", ErrNoMPV
+		return "", ErrNoPlayer
 	}
-	if p, err := exec.LookPath("mpv"); err == nil {
-		return p, nil
+	for _, name := range []string{"mpv", "vlc", "potplayer", "iina"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p, nil
+		}
 	}
 	var candidates []string
 	switch runtime.GOOS {
 	case "darwin":
 		candidates = []string{
 			"/Applications/mpv.app/Contents/MacOS/mpv",
+			"/Applications/IINA.app/Contents/MacOS/iina-cli",
+			"/Applications/VLC.app/Contents/MacOS/VLC",
 			"/opt/homebrew/bin/mpv",
 			"/usr/local/bin/mpv",
+			"/opt/homebrew/bin/vlc",
 		}
 	case "windows":
 		for _, env := range []string{"ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"} {
 			if dir := os.Getenv(env); dir != "" {
-				candidates = append(candidates, filepath.Join(dir, "mpv", "mpv.exe"))
+				candidates = append(candidates,
+					filepath.Join(dir, "mpv", "mpv.exe"),
+					filepath.Join(dir, "DAUM", "PotPlayer", "PotPlayer64.exe"),
+					filepath.Join(dir, "DAUM", "PotPlayer", "PotPlayer.exe"),
+					filepath.Join(dir, "VideoLAN", "VLC", "vlc.exe"),
+				)
 			}
 		}
 		if home, err := os.UserHomeDir(); err == nil {
-			candidates = append(candidates, filepath.Join(home, "scoop", "shims", "mpv.exe"))
+			candidates = append(candidates,
+				filepath.Join(home, "scoop", "shims", "mpv.exe"),
+				filepath.Join(home, "scoop", "shims", "potplayer.exe"),
+				filepath.Join(home, "scoop", "shims", "vlc.exe"),
+			)
 		}
 	default:
-		candidates = []string{"/usr/bin/mpv", "/usr/local/bin/mpv", "/snap/bin/mpv", "/var/lib/flatpak/exports/bin/io.mpv.Mpv"}
+		candidates = []string{
+			"/usr/bin/mpv",
+			"/usr/local/bin/mpv",
+			"/snap/bin/mpv",
+			"/var/lib/flatpak/exports/bin/io.mpv.Mpv",
+			"/usr/bin/vlc",
+			"/usr/local/bin/vlc",
+			"/snap/bin/vlc",
+		}
 	}
 	for _, c := range candidates {
 		if _, err := os.Stat(c); err == nil {
 			return c, nil
 		}
 	}
-	return "", ErrNoMPV
+	return "", ErrNoPlayer
 }
 
 // Args returns mpv's arguments to play url with the headers it needs,
@@ -66,7 +92,7 @@ func Args(url, title string, h http.Header) []string {
 		// with mpv/uosc. Forward buffering remains enabled.
 		"--demuxer-seekable-cache=no",
 		"--force-media-title=" + title,
-		"--title=" + title + " — BaiduNetGo",
+		"--title=" + title + " — OpenListGo",
 	}
 	if ua := h.Get("User-Agent"); ua != "" {
 		args = append(args, "--user-agent="+ua)
@@ -83,10 +109,19 @@ func Args(url, title string, h http.Header) []string {
 	return append(args, "--", url)
 }
 
-// Play starts mpv playing url. It returns once mpv has started; mpv lives
+// PlayerArgs returns the arguments appropriate for playerPath.
+func PlayerArgs(playerPath, url, title string, h http.Header) []string {
+	base := strings.ToLower(filepath.Base(playerPath))
+	if strings.Contains(base, "mpv") {
+		return Args(url, title, h)
+	}
+	return []string{url}
+}
+
+// Play starts player playing url. It returns once player has started; player lives
 // on after the app quits.
-func Play(mpv, url, title string, h http.Header) error {
-	cmd := exec.Command(mpv, Args(url, title, h)...)
+func Play(playerPath, url, title string, h http.Header) error {
+	cmd := exec.Command(playerPath, PlayerArgs(playerPath, url, title, h)...)
 	cmd.Stdout, cmd.Stderr = nil, nil
 	if err := cmd.Start(); err != nil {
 		return err

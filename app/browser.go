@@ -535,13 +535,21 @@ func (a *App) buildFileMenu(m *ui.Menu, l *listing, f baidu.File) {
 		a.open(f)
 	}
 	if k := kindOf(&f); one && (k == kindVideo || k == kindAudio) {
-		if m.Item("用 mpv 播放").Chosen() {
-			a.playInMPV(f)
+		if m.Item("用外部播放器播放").Chosen() {
+			a.playMedia(f)
+		}
+	}
+	if k := kindOf(&f); one && (k == kindDoc || k == kindSheet) {
+		if m.Item("用系统应用打开").Chosen() {
+			a.openWithSystem(f)
 		}
 	}
 	m.Separator()
 	if m.Item("下载").Chosen() {
 		a.download(files)
+	}
+	if one && m.Item("复制直链").Chosen() {
+		a.copyDirectLink(f)
 	}
 	if m.Item("分享").Chosen() {
 		a.share(files)
