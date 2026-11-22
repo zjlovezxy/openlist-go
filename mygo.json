@@ -1,7 +1,7 @@
 {
   "name": "OpenListGo",
   "identifier": "org.oplist.openlistgo",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "out": "build",
   "macos": {
     "entitlements": "entitlements.plist"
