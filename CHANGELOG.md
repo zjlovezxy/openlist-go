@@ -4,6 +4,12 @@
 
 <!-- 写在这里的内容会成为下一个版本的更新说明；留空则按提交记录自动生成。 -->
 
+## [0.2.0] - 2026-11-22
+
+### 改进
+
+- feat: decouple external players, add office doc handling and preview limits, remove auto-tuning
+
 ## [0.1.3] - 2026-11-22
 
 ### 修复
