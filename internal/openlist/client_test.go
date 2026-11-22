@@ -77,3 +77,33 @@ func TestOpenListClient(t *testing.T) {
 		t.Fatalf("Delete() failed: %v", err)
 	}
 }
+
+func TestAutoReloginWithPassword(t *testing.T) {
+	srv := fakepan.New()
+	defer srv.Close()
+
+	ctx := context.Background()
+	// Test client initialized without token, but with username and password
+	cr := openlist.Credentials{
+		Server:   srv.URL,
+		Username: "admin",
+		Password: "{{PASSWORD_h6j0j798}}",
+	}
+	c := openlist.OpenAt(cr, srv.URL)
+
+	u, err := c.User(ctx)
+	if err != nil {
+		t.Fatalf("User() with password auto-login failed: %v", err)
+	}
+	if u.Name != "admin" {
+		t.Errorf("expected username admin, got %s", u.Name)
+	}
+	// Verify token was populated and stored
+	newCr := c.Credentials()
+	if newCr.Token == "" {
+		t.Fatalf("expected Token to be acquired from login, got empty")
+	}
+	if newCr.Password != "{{PASSWORD_h6j0j798}}" {
+		t.Fatalf("expected Password to be preserved, got %s", newCr.Password)
+	}
+}

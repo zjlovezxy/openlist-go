@@ -28,10 +28,18 @@ func (l *loginState) stopQR() {}
 func (a *App) loginView(c *ui.Context, t *ui.Theme, p *palette) {
 	l := &a.login
 	if l.server == "" {
-		l.server = "http://localhost:5244"
+		if a.settings.LastServer != "" {
+			l.server = a.settings.LastServer
+		} else {
+			l.server = "http://localhost:5244"
+		}
 	}
 	if l.username == "" && l.tab == 0 {
-		l.username = "admin"
+		if a.settings.LastUsername != "" {
+			l.username = a.settings.LastUsername
+		} else {
+			l.username = "admin"
+		}
 	}
 
 	root := ui.Box(c).Fill().Background(t.Background).Clip()
@@ -167,7 +175,7 @@ func (a *App) loginFooter(c *ui.Context, t *ui.Theme, p *palette) {
 		go a.signInWith(baidu.OpenAt(baidu.Credentials{Server: srv.URL, Token: "fake-jwt", Username: "admin"}, srv.URL), false)
 	}
 
-	ui.Text(c, "凭据加密保存在本机系统钥匙串").TextColor(t.TextMuted).FontSize(11)
+	ui.Text(c, "凭据加密保存在本机安全私有存储").TextColor(t.TextMuted).FontSize(11)
 }
 
 // logoMark is the app's mark.

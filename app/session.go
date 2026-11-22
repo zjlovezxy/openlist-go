@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"os"
+	"runtime"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -45,11 +46,20 @@ func OpenStore() *auth.Store {
 		log.Printf("session: %v", err)
 		return nil
 	}
+	var kr auth.Keyring
+	var older []auth.Keyring
+	// On Android / iOS, the application data directory is an isolated sandbox per UID.
+	// Moreover, MyGo's Android Secrets implementation has an XML serialization bug
+	// (null character in preference key causes XmlPullParserException and clears preferences on restart).
+	// Therefore, mobile platforms use the private sandbox key file directly.
+	if runtime.GOOS != "android" && runtime.GOOS != "ios" {
+		kr = mygo.Secrets.Service(keyService)
+		older = []auth.Keyring{mygo.Secrets, mygo.Secrets.Service(keyService + ".dev"), mygo.Secrets.Service(mygo.App.Name())}
+	}
 	return &auth.Store{
 		Dir:     dir,
-		Keyring: mygo.Secrets.Service(keyService),
-		// Where earlier builds kept the key.
-		Older: []auth.Keyring{mygo.Secrets, mygo.Secrets.Service(keyService + ".dev"), mygo.Secrets.Service(mygo.App.Name())},
+		Keyring: kr,
+		Older:   older,
 	}
 }
 
@@ -71,13 +81,24 @@ func (a *App) boot() {
 		var cr baidu.Credentials
 		var expired error
 		if err := a.store.Load(&cr); err == nil {
+			a.update(func() {
+				if cr.Server != "" {
+					a.login.server = cr.Server
+				}
+				if cr.Username != "" {
+					a.login.username = cr.Username
+				}
+				if cr.Password != "" {
+					a.login.password = cr.Password
+				}
+			})
 			c := baidu.Open(cr)
 			u, err := c.User(context.Background())
 			if err == nil {
 				a.signedIn(c, u, false)
 				return
 			}
-			if !errors.Is(err, baidu.ErrNotLoggedIn) {
+			if !baidu.Expired(err) {
 				// Offline, say: keep the session for the next try.
 				a.signInFailed(err, false)
 				return
@@ -156,6 +177,14 @@ func (a *App) signedIn(c *baidu.Client, u *baidu.User, fresh bool) {
 		c.OnChange(func() { a.persist(c) })
 		a.persist(c)
 	}
+	cr := c.Credentials()
+	if cr.Server != "" {
+		a.settings.LastServer = cr.Server
+	}
+	if cr.Username != "" {
+		a.settings.LastUsername = cr.Username
+	}
+	_ = a.settings.save()
 	a.update(func() {
 		if fresh && a.settings.SkipImport {
 			a.settings.SkipImport = false
@@ -237,7 +266,10 @@ func (a *App) signOut() {
 		a.forgetThumbs() // another account may sign in
 	}
 	a.sess = nil
-	a.login = loginState{}
+	a.login = loginState{
+		server:   a.settings.LastServer,
+		username: a.settings.LastUsername,
+	}
 	a.phase = phaseLogin
 	a.router.Replace("/files")
 }

@@ -151,7 +151,7 @@ func (c *Client) request(ctx context.Context, method, endpoint string, body any,
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return &HTTPError{Status: resp.StatusCode, Body: "Unauthorized"}
+		return ErrNotLoggedIn
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(resp.Body)
@@ -195,11 +195,18 @@ func (c *Client) User(ctx context.Context) (*User, error) {
 		Disabled bool   `json:"disabled"`
 	}
 	err := c.request(ctx, http.MethodGet, "/api/me", nil, &data)
+	if err == nil && c.username != "" && c.username != "guest" && (data.Username == "guest" || data.ID == 0) {
+		// AList / OpenList returns HTTP 200 with guest info when unauthenticated or token expired
+		err = ErrNotLoggedIn
+	}
 	if err != nil {
-		// If token expired, try logging in once
+		// If token expired, try logging in once with saved credentials
 		if c.username != "" && c.password != "" {
 			if lerr := c.login(ctx); lerr == nil {
 				err = c.request(ctx, http.MethodGet, "/api/me", nil, &data)
+				if err == nil && c.username != "" && c.username != "guest" && (data.Username == "guest" || data.ID == 0) {
+					err = ErrNotLoggedIn
+				}
 			}
 		}
 		if err != nil {

@@ -13,7 +13,9 @@ import (
 // settings are the user's choices, kept as JSON in the app's data
 // directory.
 type settings struct {
-	MPV         string `json:"mpv,omitempty"`          // mpv's path, found on its own when empty
+	LastServer   string `json:"last_server,omitempty"`   // last used OpenList server URL
+	LastUsername string `json:"last_username,omitempty"` // last used OpenList username
+	MPV          string `json:"mpv,omitempty"`           // mpv's path, found on its own when empty
 	DownloadDir string `json:"download_dir,omitempty"` // where downloads go, Downloads when empty
 	Threads     int    `json:"threads,omitempty"`      // connections per download
 	Parallel    int    `json:"parallel,omitempty"`     // downloads at once
